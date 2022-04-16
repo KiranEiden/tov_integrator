@@ -5,9 +5,38 @@ import sys
 import argparse
 import warnings
 import numpy as np
-import matplotlib.pyplot as plt
 
 from rk4 import System, rk4
+
+description = "Script for integrating the Tolman-Oppenheimer-Volkov equations for a given EoS table."
+
+eos_table_help = """Path to equation of state table file. Should be simple whitespace delimited
+        ASCII file with the first five columns being temperature (MeV), baryonic number density
+        (1/fm^3), charge fraction (dimensionless), pressure (MeV / fm^3), and energy density
+        (MeV / fm^3) respectively."""
+central_pressure_range_help = """Range of central pressures to initialize with to generate the
+        mass-radius relation. Should be in units of the maximum pressure in the EoS table."""
+num_points_help = """The number of central pressures to use, with bounds set by the
+        --central_pressure_range or -cpr argument."""
+linear_help = """Use linear spacing for the central pressures instead of logarithmic."""
+outfile_help = """The name of the output file. Do not supply the path to the output directory; use
+        the -d or --outdir argument for that."""
+outdir_help = """The path to the output directory. If this argument is not supplied, the output files
+        will be located in the same directory as the eos_table."""
+profiles_help = """If supplied, will output a profile of pressure, mass, and energy density as a
+        function of radius for each choice of central pressure."""
+
+parser = argparse.ArgumentParser(description=description)
+parser.add_argument('eos_table', help=eos_table_help)
+parser.add_argument('-cpr', '--central_pressure_range', nargs=2, type=float, default=(1e-2, 1.),
+        help=central_pressure_range_help)
+parser.add_argument('-n', '--num_points', type=int, default=100, help=num_points_help)
+parser.add_argument('-l', '--linear', action='store_true', help=linear_help)
+parser.add_argument('-f', '--outfile', default="mr_rel.txt", help=outfile_help)
+parser.add_argument('-d', '--outdir', help=outdir_help)
+parser.add_argument('-p', '--profiles', action='store_true', help=profiles_help)
+
+args = parser.parse_args(sys.argv[1:])
 
 # Constants
 G  = 6.67430e-8 # cm**3 / g / s**2
@@ -20,9 +49,8 @@ fm3_cm3 = 1e39
 cm_km = 1e-5
 g_Msun = 1 / (1.99e33)
 
-fname = os.path.join("EoS_data", "68_APR", "eos.table")
-
-x = np.loadtxt(fname).T
+# Load EoS table and convert to CGS
+x = np.loadtxt(args.eos_table).T
 T, nb, Yq, P, ε = x[0:5]
 idx = np.argsort(P)
 
@@ -32,10 +60,27 @@ Yq = Yq[idx]
 P  = P[idx] * MeV_erg * fm3_cm3
 ε  = ε[idx] * MeV_erg * fm3_cm3
 
-log_P_max = np.log10(P[-1])
-ΔP = 0.6861537984007633*log_P_max - 22.41009625094139
-P_c = np.logspace(log_P_max-ΔP, log_P_max, num=100)
-            
+# Generate central pressure sequence
+for val in args.central_pressure_range:
+    assert val > 0, "Values specifying central pressure bounds must be positive"
+    assert val <= 1, "Values specifying central pressure bounds must be <= 1"
+
+if args.linear:
+    P_max = P[-1]
+    d1 = args.central_pressure_range[0]
+    d2 = args.central_pressure_range[1]
+    P_c = np.linspace(P_max*d1, P_max*d2, num=args.num_points)
+else:
+    log_P_max = np.log10(P[-1])
+    d1 = np.log10(args.central_pressure_range[0])
+    d2 = np.log10(args.central_pressure_range[1])
+    P_c = np.logspace(log_P_max+d1, log_P_max+d2, num=args.num_points)
+    
+# Determine output directory
+if args.outdir is None:
+    args.outdir = os.path.dirname(args.eos_table)
+
+# Setup for integrator            
 def Pprime(r_i, P_i, M_i):
     """ Derivative of P with respect to r. """
     
@@ -67,7 +112,7 @@ def integrate_TOV(step, P0):
     res = np.array(list(rk4(system, step, completed)))
     return res
 
-def _progress_bar(frac, size=50):
+def progress_bar(frac, size=50):
     
     n = round(size*frac)
     bar = '[' + '⊙'*n + ' '*(size-n) + ']'
@@ -76,17 +121,36 @@ def _progress_bar(frac, size=50):
     else:
         end = '\n'
     print(bar, f'{round(100*frac)}%', end=end)
-    
+
+# Do integration for each central pressure    
 dr = 1e2
 results = [None]*len(P_c)
-_progress_bar(0)
+progress_bar(0)
 for i, P_ci in enumerate(P_c):
     results[i] = integrate_TOV(dr, P_ci)
-    _progress_bar((i+1)/len(P_c))
+    progress_bar((i+1)/len(P_c))
     
 R = np.array([res[-1][0] for res in results])
 M = np.array([res[-1][2] for res in results])
-plt.plot(R*cm_km, M*g_Msun)
-plt.xlabel(r"$R~[\mathrm{km}]$")
-plt.ylabel(r"$M~[\mathrm{M_\odot}]$")
-plt.show()
+
+# Output data
+fname = os.path.join(args.outdir, args.outfile)
+
+with open(fname, 'w') as file:
+    print("# Radius", "Mass", file=file)
+    print("# km", "M_sun", file=file)
+    for R_i, M_i in zip(R, M):
+        print(R_i*cm_km, M_i*g_Msun, file=file)
+
+if args.profiles:
+
+    for i in range(len(P_c)):
+
+        fname = os.path.join(args.outdir, f"prof_{i}.txt")
+        with open(fname, 'w') as file:
+            print("# Radius Pressure Mass Energy_Density", file=file)
+            print("# cm MeV/fm^3 M_sun MeV/fm^3", file=file)
+            for row in results[i]:
+                print(row[0]*cm_km,  row[1]/MeV_erg/fm3_cm3,
+                      row[2]*g_Msun, np.interp(row[1], P, ε)/MeV_erg/fm3_cm3,
+                      file=file)

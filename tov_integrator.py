@@ -137,10 +137,10 @@ M = np.array([res[-1][2] for res in results])
 fname = os.path.join(args.outdir, args.outfile)
 
 with open(fname, 'w') as file:
-    print("# Radius", "Mass", file=file)
-    print("# km", "M_sun", file=file)
-    for R_i, M_i in zip(R, M):
-        print(R_i*cm_km, M_i*g_Msun, file=file)
+    print("# Radius", "Mass", "Central_Pressure", file=file)
+    print("# km", "M_sun", "MeV/fm^3", file=file)
+    for i in range(len(P_c)):
+        print(R[i]*cm_km, M[i]*g_Msun, P_c[i]/MeV_erg/fm3_cm3, file=file)
 
 if args.profiles:
 

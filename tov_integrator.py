@@ -48,7 +48,6 @@ args = parser.parse_args(sys.argv[1:])
 G  = 6.67430e-8 # cm**3 / g / s**2
 kB = 1.380649e-16 # erg/K
 c  = 2.99792458e10 # cm/s
-φ  = (1 + np.sqrt(5)) / 2
 
 # Unit conversions
 MeV_erg = 1.6021766339999998e-06

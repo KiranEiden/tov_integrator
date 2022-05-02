@@ -8,7 +8,7 @@ import numpy as np
 
 from rk4 import System, rk4
 
-description = "Script for integrating the Tolman-Oppenheimer-Volkov equations for a given EoS table."
+description = "Script for integrating the Tolman-Oppenheimer-Volkoff equations for a given EoS table."
 
 eos_table_help = """Path to equation of state table file. Should be simple whitespace delimited
         ASCII file with the first five columns being temperature (MeV), baryonic number density

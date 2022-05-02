@@ -18,7 +18,8 @@ files_help = """A list of either data files or INI-style configuration files wit
         'file' key to collect the files. To only plot a subset of files from that group (but print
         a summary that includes all of them), add the 'pfile' key with a glob pattern for
         capturing the list of filenames. Can specify the position of the label (from 'left',
-        'right', 'peak') as well using the 'labelpos' key. String values can be bare (unquoted)
+        'right', 'peak', 'underpeak', and 'None') as well using the 'labelpos' key. Setting 'legend'
+        equal to True will add the label to the legend. String values can be bare (unquoted)
         or single-quoted in these files.
         """
 vars_help = """Variables to plot from each of the files. The variable to go on the x-axis should
@@ -34,9 +35,8 @@ latex_help = """If a summary is printed, print it in LaTeX format."""
 outfile_help = """If supplied, save plot to file instead of showing it."""
 constraints_help = """Plot constraints from observational data. The following options are available:
         'PSR J0348+0432' (Antoniadis et al. 2013), 'MSP J0740+6620' (Miller et al. 2021),
-        'PSR J0030+0451' (Miller et al. 2019), 'Vela X-1' (Falanga et al. 2015), 'GW170817 MM17'
-        (Margalit & Metzger 2017; 90% confidence interval upper mass limit). Omit arguments to plot
-        all of them."""
+        'PSR J0030+0451' (Miller et al. 2019), 'Vela X-1' (Falanga et al. 2015), 'GW170817 S19'
+        (Shibata et al. 2019 upper mass limit). Omit arguments to plot all of them."""
 constraint_col_help = """Colors to use for the constraints. Will cycle through colors in order."""
 
 parser = argparse.ArgumentParser(description=description)
@@ -54,6 +54,7 @@ parser.add_argument('--constraint_colors', nargs='+', default=['lightcyan', 'bla
         'mistyrose', 'gainsboro', 'black'], help=constraints_help)
 
 args = parser.parse_args(sys.argv[1:])
+args.legend = False
 
 labels = \
 {
@@ -70,7 +71,7 @@ constraints = \
     'PSR J0348+0432': (2.01, 0.04, 0.04, None, None, None),
     'MSP J0740+6620': (2.08, 0.07, 0.07, 13.7, 2.6, 1.5),
     'PSR J0030+0451': (1.44, 0.15, 0.14, 13.02, 1.24, 1.06),
-    'GW170817 MM17' : ('M', 2.17)
+    'GW170817 S19' : ('M', 2.3)
 }
 
 #############
@@ -112,6 +113,11 @@ def _try_convert_str(s):
         return float(s)
     except ValueError:
         pass
+        
+    if s == 'True':
+        return True
+    if s == 'False':
+        return False
         
     return s.lstrip("'").rstrip("'")
     
@@ -195,6 +201,10 @@ def _plot_label(l, pos, d1, d2, c):
         plt.text(d1[idx], d2[idx]*0.965, l, fontsize=16, color=c['color'],
                 horizontalalignment='center', zorder=10)
                 
+    elif pos == 'None':
+        
+        return
+                
     else:
         
         raise ValueError(f"Invalid label position '{pos}'.")
@@ -242,9 +252,14 @@ for c, d in zip(conf, data):
     lp = c.pop('labelpos', 'left')
     pf = c.pop('pfile', set())
     pl = c.pop('plabel', l)
+    leg = c.pop('legend', False)
     
     c.setdefault('linewidth', 2)
     c.setdefault('color', 'black')
+    
+    if leg:
+        c['label'] = pl
+        args.legend = True
     
     if pf:
         irange = [i for i in range(len(f)) if f[i] in pf]
@@ -264,6 +279,7 @@ for c, d in zip(conf, data):
     c['labelpos'] = lp
     c['pfile'] = pf
     c['plabel'] = pl
+    c['legend'] = leg
     
 plt.xlabel(labels[v1], fontsize=15)
 plt.ylabel(labels[v2], fontsize=15)
@@ -285,6 +301,9 @@ if not any(y is None for y in args.ylim):
 if args.constraints is not None:
     _plot_constraints()
     
+if args.legend:
+    plt.legend(fontsize=12)
+    
 plt.gcf().set_size_inches((15, 10))
 
 if args.outfile:
@@ -296,18 +315,44 @@ else:
 # Print Summary #
 #################
     
-def _print_row(entries, header=False, divider_len=71):
+def _print_row(entries, header=False, divider_len=95):
     """Print row in table in terminal readable format."""
     
     if header:
         print('-'*divider_len)
     
     for i in range(len(entries)):
-        entries[i] = entries[i].center(9)
+        entries[i] = entries[i].center(13)
         entries[i] = '|' + entries[i] + '|'
     
     print(*entries)    
-    print('-'*divider_len)    
+    print('-'*divider_len)
+    
+def _print_row_latex(entries, header=False, footer=False):
+    """Print row in table in LaTeX format."""
+    
+    if header:
+        print(r"\begin{tabular}{cccccc}")
+        print('\t' + r"\hline"*2)
+        
+    entries[0] = r"\mathsf{" + entries[0] + "}"
+    
+    for i in range(len(entries)):
+        entries[i] = " $" + entries[i] + "$ "
+    
+    print('\t' + '&'.join(entries) + r"\\")
+    
+    if header:
+        print('\t' + r"\hline")
+        
+    if footer:
+        print('\t' + r"\hline")
+        print(r"\end{tabular}")
+    
+def _reduce_prop_mat(mat):
+    """Reduce matrix of neutron star properties for an EoS to min, max and mean for each."""
+    
+    return np.array((mat.min(axis=0), mat.max(axis=0), mat.mean(axis=0))).T
     
 if args.summary:
     
@@ -315,25 +360,59 @@ if args.summary:
     Msun_g = 1.98847e33
     km_cm = 1e5
     
-    idx = np.argsort([c['label'] for c in conf])
-    cols = ['Label', 'M_{TOV}', 'R_{TOV}', 'R_{1.4}', 'C_{TOV}',
-            'C_{1.4}']
-    _print_row(cols, True)
+    labels = (c['label'] for c in conf)
+    labels = map(str, labels)
+    idx = np.argsort(list(labels))
+    
+    if args.latex:
+        cols = ['Label', r'M_{\mathrm{TOV}}~[\mathrm{M_\odot}]', r'R_{\mathrm{TOV}}~[\mathrm{km}]',
+                r'R_{1.4}~[\mathrm{km}]', r'C_{\mathrm{TOV}}~[\mathrm{erg / g}]',
+                r'C_{1.4}~[\mathrm{erg / g}]']
+        _print_row_latex(cols, True)
+    else:
+        cols = ['Label', 'M_{TOV}', 'R_{TOV}', 'R_{1.4}', 'C_{TOV}',
+                'C_{1.4}']
+        _print_row(cols, True)
     
     for i in idx:
         
-        M = np.array(data[i]['M'])[0]
-        R = np.array(data[i]['R'])[0]
+        Ms = list(map(np.array, data[i]['M']))
+        Rs = list(map(np.array, data[i]['R']))
+        ns_prop = np.zeros((len(Ms), 5), dtype=np.float64)
         
-        i_max = np.argmax(M)
-        M_max = M[i_max]
-        R_max = R[i_max]
-        C_max = G * (M_max*Msun_g) / (R_max*km_cm)
+        for j in range(len(Ms)):
+            
+            M = Ms[j]
+            R = Rs[j]
+            
+            i_max = np.argmax(M)
+            M_max = M[i_max]
+            R_max = R[i_max]
+            C_max = G * (M_max*Msun_g) / (R_max*km_cm)
+            
+            i_1_4 = (M > 1.4).argmax()
+            R_1_4 = np.interp(1.4, M[i_1_4-1:i_1_4+1], R[i_1_4-1:i_1_4+1])
+            C_1_4 = G * (1.4*Msun_g) / (R_1_4*km_cm)
+            
+            ns_prop[j, :] = M_max, R_max, R_1_4, C_max/1e20, C_1_4/1e20
         
-        i_1_4 = (M > 1.4).argmax()
-        R_1_4 = np.interp(1.4, M[i_1_4-1:i_1_4+1], R[i_1_4-1:i_1_4+1])
-        C_1_4 = G * (1.4*Msun_g) / (R_1_4*km_cm)
+        if len(ns_prop) == 1:
+            ostr = [str(conf[i]['label'])]
+            ostr += '{:.2f} {:.1f} {:.1f} {:.1f} {:.1f}'.format(*ns_prop[0]).split()
+        else:
+            stat = _reduce_prop_mat(ns_prop)
+            # Leave out the mean for now
+            ostr = \
+            [
+                str(conf[i]['label']),
+                '{:.2f}-{:.2f}'.format(*stat[0]),
+                '{:.1f}-{:.1f}'.format(*stat[1]),
+                '{:.1f}-{:.1f}'.format(*stat[2]),
+                '{:.1f}-{:.1f}'.format(*stat[3]),
+                '{:.1f}-{:.1f}'.format(*stat[4])
+            ]
         
-        ostr = [str(conf[i]['label']), f'{M_max:.2f}', f'{R_max:.1f}', f'{R_1_4:.1f}',
-                f'{C_max/1e20:.1f}', f'{C_1_4/1e20:.1f}']
-        _print_row(ostr)
+        if args.latex:
+            _print_row_latex(ostr, footer=(i == idx[-1]))
+        else:    
+            _print_row(ostr)
